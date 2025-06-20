@@ -25,14 +25,27 @@ jobs:
       - name: Install Snyk CLI
         run: npm install -g snyk
 
-      - name: Authenticate Snyk
-        run: snyk auth ${{ secrets.SNYK_TOKEN }}
-
-      - name: Run Snyk Test
+      - name: Check for Snyk Token
+        id: token-check
         run: |
+          if [ -z "${{ secrets.SNYK_TOKEN }}" ]; then
+            echo "has-token=false" >> $GITHUB_OUTPUT
+            echo "::notice::Snyk security scan skipped - SNYK_TOKEN not available (expected for fork PRs)"
+          else
+            echo "has-token=true" >> $GITHUB_OUTPUT
+            echo "✅ SNYK_TOKEN available - proceeding with security scan"
+          fi
+
+      - name: Authenticate and Run Snyk Test
+        if: steps.token-check.outputs.has-token == 'true'
+        env:
+          SNYK_TOKEN: ${{ secrets.SNYK_TOKEN }}
+        run: |
+          snyk auth ${{ secrets.SNYK_TOKEN }}
           snyk test --json --json-file-output=snyk-report.json || true
 
       - name: Display Vulnerability Summary
+        if: steps.token-check.outputs.has-token == 'true'
         run: |
           echo "=== Snyk Vulnerability Summary ==="
           if [ -f snyk-report.json ]; then
@@ -46,9 +59,27 @@ jobs:
           echo "=================================="
 
       - name: Upload Snyk Report
+        if: steps.token-check.outputs.has-token == 'true'
         uses: actions/upload-artifact@v4
-        if: always()
         with:
           name: snyk-vulnerability-report
           path: snyk-report.json
           retention-days: 30
+
+      - name: Fork PR Notice
+        if: steps.token-check.outputs.has-token == 'false'
+        run: |
+          echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+          echo "🔐 Security Scan Skipped for Fork PR"
+          echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+          echo ""
+          echo "This is expected behavior. Fork PRs cannot access"
+          echo "repository secrets for security reasons."
+          echo ""
+          echo "The security scan will run automatically when:"
+          echo "• This PR is merged to the main repository"
+          echo "• A maintainer runs the workflow manually"
+          echo ""
+          echo "Maintainers: To enable scanning, add SNYK_TOKEN to"
+          echo "repository secrets after merging."
+          echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
